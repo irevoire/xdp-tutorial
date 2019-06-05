@@ -17,6 +17,11 @@ struct hdr_cursor {
 	void *pos;
 };
 
+struct vlan_hdr {
+	__be16	h_vlan_TCI;
+	__be16	h_vlan_encapsulated_proto;
+};
+
 /* Packet parsing helpers.
  *
  * Each helper parses a packet header, including doing bounds checking, and
@@ -33,17 +38,33 @@ static __always_inline int parse_ethhdr(struct hdr_cursor *nh,
 	struct ethhdr *eth = nh->pos;
 	int hdrsize = sizeof(*eth);
 
-	/* Byte-count bounds check; check if current pointer + size of header
-	 * is after data_end.
-	 */
 	if (nh->pos + hdrsize > data_end)
 		return -1;
 
 	nh->pos += hdrsize;
-	*ethhdr = eth;
+	if (ethhdr != NULL)
+		*ethhdr = eth;
 
 	return bpf_ntohs(eth->h_proto);
 }
+
+static __always_inline int parse_vlanhdr(struct hdr_cursor *nh,
+					void *data_end,
+					struct vlan_hdr **vlanhdr)
+{
+	struct vlan_hdr *vlan = nh->pos;
+	int hdrsize = sizeof(*vlan);
+
+	if (nh->pos + hdrsize > data_end)
+		return -1;
+
+	nh->pos += hdrsize;
+	if (vlanhdr != NULL)
+		*vlanhdr = vlan;
+
+	return bpf_ntohs(vlan->h_vlan_encapsulated_proto);
+}
+
 
 /* Assignment 2: Implement and use this */
 static __always_inline int parse_ip6hdr(struct hdr_cursor *nh,
@@ -53,14 +74,12 @@ static __always_inline int parse_ip6hdr(struct hdr_cursor *nh,
 	struct ipv6hdr *ip = nh->pos;
 	int hdrsize = sizeof(*ip);
 
-	/* Byte-count bounds check; check if current pointer + size of header
-	 * is after data_end.
-	 */
 	if (nh->pos + hdrsize > data_end)
 		return -1;
 
 	nh->pos += hdrsize;
-	*ip6hdr = ip;
+	if (ip6hdr != NULL)
+		*ip6hdr = ip;
 
 	return bpf_ntohs(ip->nexthdr);
 }
@@ -77,7 +96,8 @@ static __always_inline int parse_icmp6hdr(struct hdr_cursor *nh,
 		return -1;
 
 	nh->pos += hdrsize;
-	*icmp6hdr = icmp;
+	if (icmp6hdr != NULL)
+		*icmp6hdr = icmp;
 
 	return 0; // there is no next_header in icmp
 }
@@ -87,8 +107,7 @@ int  xdp_parser_func(struct xdp_md *ctx)
 {
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
-	struct ethhdr *eth;
-	struct ipv6hdr *ip6;
+
 	struct icmp6hdr *icmp6;
 
 	/* Default action XDP_PASS, imply everything we couldn't parse, or that
@@ -108,12 +127,18 @@ int  xdp_parser_func(struct xdp_md *ctx)
 	 * parsing fails. Each helper function does sanity checking (is the
 	 * header type in the packet correct?), and bounds checking.
 	 */
-	nh_type = parse_ethhdr(&nh, data_end, &eth);
-	if (nh_type != ETH_P_IPV6)
-		goto out;
+	nh_type = parse_ethhdr(&nh, data_end, NULL);
+	switch (nh_type) {
+		case ETH_P_IPV6: break;
+		case ETH_P_8021Q: /* FALLTHROUGH */
+		case ETH_P_8021AD:
+				 nh_type = parse_vlanhdr(&nh, data_end, NULL);
+				 break;
+		default: goto out;
+	}
 
 	/* Assignment additions go below here */
-	nh_type = parse_ip6hdr(&nh, data_end, &ip6);
+	nh_type = parse_ip6hdr(&nh, data_end, NULL);
 	if (nh_type != 0x3A00) // ICMPv6 TODO find a definition of this somewhere
 		goto out;
 
