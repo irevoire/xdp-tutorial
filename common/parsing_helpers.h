@@ -66,7 +66,8 @@ static __always_inline int parse_ethhdr(struct hdr_cursor *nh, void *data_end,
 		return -1;
 
 	nh->pos += hdrsize;
-	*ethhdr = eth;
+	if (ethhdr != NULL)
+		*ethhdr = eth;
         vlh = nh->pos;
         h_proto = eth->h_proto;
 
@@ -103,7 +104,8 @@ static __always_inline int parse_ip6hdr(struct hdr_cursor *nh,
 		return -1;
 
 	nh->pos = ip6h + 1;
-	*ip6hdr = ip6h;
+	if (ip6hdr != NULL)
+		*ip6hdr = ip6h;
 
 	return ip6h->nexthdr;
 }
@@ -125,7 +127,8 @@ static __always_inline int parse_iphdr(struct hdr_cursor *nh,
                 return -1;
 
 	nh->pos += hdrsize;
-	*iphdr = iph;
+	if (iphdr != NULL)
+		*iphdr = iph;
 
 	return iph->protocol;
 }
@@ -140,7 +143,8 @@ static __always_inline int parse_icmp6hdr(struct hdr_cursor *nh,
 		return -1;
 
 	nh->pos   = icmp6h + 1;
-	*icmp6hdr = icmp6h;
+	if (icmp6hdr != NULL)
+		*icmp6hdr = icmp6h;
 
 	return icmp6h->icmp6_type;
 }
@@ -155,7 +159,8 @@ static __always_inline int parse_icmphdr(struct hdr_cursor *nh,
 		return -1;
 
 	nh->pos  = icmph + 1;
-	*icmphdr = icmph;
+	if (icmphdr != NULL)
+		*icmphdr = icmph;
 
 	return icmph->type;
 }
