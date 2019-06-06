@@ -94,7 +94,43 @@ static __always_inline int parse_udphdr(struct hdr_cursor *nh,
 SEC("xdp_port_rewrite")
 int xdp_port_rewrite_func(struct xdp_md *ctx)
 {
-        return XDP_PASS;
+	void *data_end = (void *)(long)ctx->data_end;
+	void *data = (void *)(long)ctx->data;
+
+	struct tcphdr *tcphdr = NULL;
+	struct udphdr *udphdr = NULL;
+
+	struct hdr_cursor nh;
+	int nh_type;
+        nh.pos = data;
+
+	struct ethhdr *eth;
+
+	nh_type = parse_ethhdr(&nh, data_end, &eth);
+
+        if (nh_type == ETH_P_IPV6) {
+                nh_type = parse_ip6hdr(&nh, data_end, NULL);
+		switch (nh_type) {
+			case IPPROTO_TCP: goto parse_tcp;
+			case IPPROTO_UDP: goto parse_udp;
+			default: goto out;
+		}
+        } else if (nh_type == ETH_P_IP) {
+                nh_type = parse_iphdr(&nh, data_end, NULL);
+		switch (nh_type) {
+			case IPPROTO_TCP: goto parse_tcp;
+			case IPPROTO_UDP: goto parse_udp;
+			default: goto out;
+		}
+        }
+parse_tcp:
+	parse_tcphdr(&nh, data_end, &tcphdr);
+	goto out;
+parse_udp:
+	parse_udphdr(&nh, data_end, &udphdr);
+
+out:
+	return XDP_PASS;
 }
 
 /* VLAN swapper; will pop outermost VLAN tag if it exists, otherwise push a new
@@ -134,19 +170,16 @@ int  xdp_parser_func(struct xdp_md *ctx)
 	void *data_end = (void *)(long)ctx->data_end;
 	void *data = (void *)(long)ctx->data;
 
-	struct tcphdr *tcphdr = NULL;
-	struct udphdr *udphdr = NULL;
-
 	/* Default action XDP_PASS, imply everything we couldn't parse, or that
 	 * we don't want to deal with, we just pass up the stack and let the
 	 * kernel deal with it.
 	 */
 	__u32 action = XDP_PASS; /* Default action */
 
-        /* These keep track of the next header type and iterator pointer */
+	/* These keep track of the next header type and iterator pointer */
 	struct hdr_cursor nh;
 	int nh_type;
-        nh.pos = data;
+	nh.pos = data;
 
 	struct ethhdr *eth;
 
@@ -156,27 +189,36 @@ int  xdp_parser_func(struct xdp_md *ctx)
 	 */
 	nh_type = parse_ethhdr(&nh, data_end, &eth);
 
-        if (nh_type == ETH_P_IPV6) {
-                nh_type = parse_ip6hdr(&nh, data_end, NULL);
-		switch (nh_type) {
-			case IPPROTO_TCP: goto parse_tcp;
-			case IPPROTO_UDP: goto parse_udp;
-			default: goto out;
-		}
-        } else if (nh_type == ETH_P_IP) {
-                nh_type = parse_iphdr(&nh, data_end, NULL);
-		switch (nh_type) {
-			case IPPROTO_TCP: goto parse_tcp;
-			case IPPROTO_UDP: goto parse_udp;
-			default: goto out;
-		}
-        }
-parse_tcp:
-	parse_tcphdr(&nh, data_end, &tcphdr);
-	goto out;
-parse_udp:
-	parse_udphdr(&nh, data_end, &udphdr);
+	if (nh_type == ETH_P_IPV6) {
+		struct ipv6hdr *ip6h;
+		struct icmp6hdr *icmp6h;
 
+		nh_type = parse_ip6hdr(&nh, data_end, &ip6h);
+		if (nh_type != IPPROTO_ICMPV6)
+			goto out;
+
+		nh_type = parse_icmp6hdr(&nh, data_end, &icmp6h);
+		if (nh_type != ICMPV6_ECHO_REQUEST)
+			goto out;
+
+		if (bpf_ntohs(icmp6h->icmp6_sequence) % 2 == 0)
+			action = XDP_DROP;
+
+	} else if (nh_type == ETH_P_IP) {
+		struct iphdr *iph;
+		struct icmphdr *icmph;
+
+		nh_type = parse_iphdr(&nh, data_end, &iph);
+		if (nh_type != IPPROTO_ICMP)
+			goto out;
+
+		nh_type = parse_icmphdr(&nh, data_end, &icmph);
+		if (nh_type != ICMP_ECHO)
+			goto out;
+
+		if (bpf_ntohs(icmph->un.echo.sequence) % 2 == 0)
+			action = XDP_DROP;
+	}
 out:
 	return xdp_stats_record_action(ctx, action);
 }
