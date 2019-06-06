@@ -19,28 +19,40 @@
  */
 static __always_inline int vlan_tag_pop(struct xdp_md *ctx, struct ethhdr *eth)
 {
-	/*void *data_end = (void *)(long)ctx->data_end;
+	void *data_end = (void *)(long)ctx->data_end;
         struct ethhdr eth_cpy;
-        struct vlan_hdr *vlh;
-        __be16 h_proto;*/
-        int vlid = -1;
+        struct vlan_hdr *vlh = (void *)(eth + 1);
+	int vlid = -1;
 
         /* Check if there is a vlan tag to pop */
+	if (!proto_is_vlan(eth->h_proto))
+		return -1;
 
         /* Still need to do bounds checking */
-
-        /* Save vlan ID for returning, h_proto for updating Ethernet header */
+	if (vlh + 1 > data_end)
+		return -1;
 
         /* Make a copy of the outer Ethernet header before we cut it off */
+	eth_cpy = *eth;
+
+        /* Save vlan ID for returning, h_proto for updating Ethernet header */
+	vlid = bpf_ntohs(vlh->h_vlan_TCI);
+	eth_cpy.h_proto = vlh->h_vlan_encapsulated_proto;
 
         /* Actually adjust the head pointer */
+	if (bpf_xdp_adjust_head(ctx, sizeof(*vlh)))
+		return -1;
 
         /* Need to re-evaluate data *and* data_end and do new bounds checking
          * after adjusting head
          */
+	eth = (void *)(long)ctx->data;
+	data_end = (void *)(long)ctx->data_end;
+	if (eth + 1 > data_end)
+		return -1;
 
         /* Copy back the old Ethernet header and update the proto type */
-
+	*eth = eth_cpy;
 
         return vlid;
 }
