@@ -63,6 +63,40 @@ static __always_inline int vlan_tag_pop(struct xdp_md *ctx, struct ethhdr *eth)
 static __always_inline int vlan_tag_push(struct xdp_md *ctx,
                                          struct ethhdr *eth, int vlid)
 {
+	void *data_end = (void *)(long)ctx->data_end;
+        struct ethhdr eth_cpy;
+        struct vlan_hdr *vlh;
+
+        /* Check if there is already a vlan tag */
+	if (proto_is_vlan(eth->h_proto))
+		return -1;
+
+        /* Make a copy of the outer Ethernet header before we cut it off */
+	eth_cpy = *eth;
+
+        /* increase the size on the front by the size of a vlan tag */
+	if (bpf_xdp_adjust_head(ctx, -(int) sizeof(*vlh)))
+		return -1;
+
+	eth = (void *)(long)ctx->data;
+	data_end = (void *)(long)ctx->data_end;
+
+        /* check if we have some size left for eth */
+	if (eth + 1 > data_end)
+		return -1;
+
+	/* put eth back in place */
+	*eth = eth_cpy;
+	vlh = (void *)(eth + 1);
+
+        /* check if we have some size left for vlan */
+	if (vlh + 1 > data_end)
+		return -1;
+
+	vlh->h_vlan_TCI = bpf_htons(vlid);
+	vlh->h_vlan_encapsulated_proto = eth->h_proto;
+	eth->h_proto = bpf_htons(ETH_P_8021Q);
+
         return 0;
 }
 
