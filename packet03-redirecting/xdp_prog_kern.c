@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #include <linux/bpf.h>
 #include <linux/in.h>
+
 #include "bpf_helpers.h"
 #include "bpf_endian.h"
 
@@ -28,20 +29,31 @@ struct bpf_map_def SEC("maps") redirect_params = {
 	.value_size = ETH_ALEN,
 	.max_entries = 1,
 };
+
 static __always_inline void swap_src_dst_mac(struct ethhdr *eth)
 {
 	/* Assignment 1: swap source and destination addresses in the eth.
 	 * For simplicity you can use the memcpy macro defined above */
+	unsigned char addr[ETH_ALEN];
+	__builtin_memcpy(&addr, &eth->h_source, sizeof(addr));
+	__builtin_memcpy(&eth->h_source, &eth->h_dest, sizeof(addr));
+	__builtin_memcpy(&eth->h_dest, &addr, sizeof(addr));
 }
 
 static __always_inline void swap_src_dst_ipv6(struct ipv6hdr *ipv6)
 {
 	/* Assignment 1: swap source and destination addresses in the iphv6dr */
+	struct in6_addr addr = ipv6->saddr;
+	ipv6->saddr = ipv6->daddr;
+	ipv6->daddr = addr;
 }
 
 static __always_inline void swap_src_dst_ipv4(struct iphdr *iphdr)
 {
 	/* Assignment 1: swap source and destination addresses in the iphdr */
+	__u32 addr = iphdr->saddr;
+	iphdr->saddr = iphdr->daddr;
+	iphdr->daddr = addr;
 }
 
 /* Implement packet03/assignment-1 in this section */
@@ -96,6 +108,11 @@ int xdp_icmp_echo_func(struct xdp_md *ctx)
 
 	/* Assignment 1: patch the packet and update the checksum. You can use
 	 * the echo_reply variable defined above to fix the ICMP Type field. */
+	__u16 tmp = (icmphdr->type << 8) | icmphdr->code;
+	icmphdr->checksum += tmp;
+	icmphdr->code = ICMP_ECHOREPLY;
+	tmp = (icmphdr->type << 8) | icmphdr->code;
+	icmphdr->checksum += ~tmp;
 
 	action = XDP_TX;
 
